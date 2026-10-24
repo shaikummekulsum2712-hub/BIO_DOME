@@ -23,6 +23,7 @@ int currentTick = 0;
 
 // ---------- EVENT LOG (keeps only the last 3 events) ----------
 string events[3] = {"", "", ""};
+string lastAction = "(nothing yet)";     // shows the last key you pressed
 
 void addEvent(string text) {
     events[0] = events[1];
@@ -452,6 +453,7 @@ public:
              << "  Starved: " << starved << "\033[K\n";
         cout << "Mutation rate: " << fixed << setprecision(2) << mutationRate
              << "   Delay: " << delayMs << " ms\033[K\n";
+        cout << "Last key: " << lastAction << "\033[K\n";
 
         double nowS, nowV, nowZ;
         if (averageGenes('r', nowS, nowV, nowZ) > 0) {
@@ -520,29 +522,49 @@ int main() {
             key = _getch();                     // paused: wait here until a key is pressed
         }
 
-        // ---- 3. HANDLE THE KEY ----
+        // ---- 3. HANDLE THE KEY (and remember it in lastAction) ----
         bool stepOnce = false;
-        if (key == 'q' || key == 'Q') quit = true;
-        else if (key == ' ') running = !running;
-        else if (key == 'n' || key == 'N') stepOnce = true;
-        else if (key == '1') delayMs = 800;
-        else if (key == '2') delayMs = 400;
-        else if (key == '3') delayMs = 200;
-        else if (key == '4') delayMs = 80;
-        else if (key == '5') delayMs = 20;
-        else if (key == 'r' || key == 'R') world.addRabbits(5);
-        else if (key == 'f' || key == 'F') world.addFoxes(2);
-        else if (key == 'k' || key == 'K') world.drought();
-        else if (key == '+') world.changeMutation(0.05);
-        else if (key == '-') world.changeMutation(-0.05);
-        else if (key == 'd' || key == 'D') {
+        if (key == 'q' || key == 'Q') {
+            quit = true;
+            lastAction = "[Q] quitting";
+        } else if (key == ' ') {
+            running = !running;
+            lastAction = running ? "[SPACE] simulation RUNNING" : "[SPACE] simulation PAUSED";
+        } else if (key == 'n' || key == 'N') {
+            stepOnce = true;
+            lastAction = "[N] one step";
+        } else if (key == '1') { delayMs = 800; lastAction = "[1] speed: very slow"; }
+        else if (key == '2') { delayMs = 400; lastAction = "[2] speed: slow"; }
+        else if (key == '3') { delayMs = 200; lastAction = "[3] speed: medium"; }
+        else if (key == '4') { delayMs = 80;  lastAction = "[4] speed: fast"; }
+        else if (key == '5') { delayMs = 20;  lastAction = "[5] speed: very fast"; }
+        else if (key == 'r' || key == 'R') {
+            world.addRabbits(5);
+            lastAction = "[R] added 5 rabbits";
+        } else if (key == 'f' || key == 'F') {
+            world.addFoxes(2);
+            lastAction = "[F] added 2 foxes";
+        } else if (key == 'k' || key == 'K') {
+            world.drought();
+            lastAction = "[K] drought, all food removed";
+        } else if (key == '+') {
+            world.changeMutation(0.05);
+            lastAction = "[+] mutation rate increased";
+        } else if (key == '-') {
+            world.changeMutation(-0.05);
+            lastAction = "[-] mutation rate decreased";
+        } else if (key == 'd' || key == 'D') {
             cout << "\033[?25h\n";               // show the cursor while typing
             string a;
             cout << "Food x (0-39): ";  getline(cin, a);  double fx = atof(a.c_str());
             cout << "Food y (0-13): ";  getline(cin, a);  double fy = atof(a.c_str());
             cout << "How many: ";       getline(cin, a);  int n = atoi(a.c_str());
             world.dropFood(fx, fy, n);
+            lastAction = "[D] dropped " + to_string(n) + " food near ("
+                         + to_string((int)fx) + ", " + to_string((int)fy) + ")";
             cout << "\033[2J\033[?25l";          // clear screen again
+        } else if (key != 0) {
+            lastAction = string("'") + key + "' is not a command";
         }
 
         // ---- 4. UPDATE ----
