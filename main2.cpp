@@ -1,30 +1,26 @@
 
-#include <iostream>
-#include <sstream>
-#include <iomanip>
 #include <string>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
-#include <thread>
-#include <chrono>
-#include <conio.h>
-#include <windows.h>
 using namespace std;
 
+// =====================================================
+// SIMULATION LOGIC ONLY (no window, no drawing)
+// =====================================================
 const int WIDTH = 40;
 const int HEIGHT = 14;
+const int MAX_FOOD = 100;
 
-// ---------- SHARED SETTINGS AND COUNTERS ----------
 double mutationRate = 0.2;
 int births = 0;
 int eaten = 0;
 int starved = 0;
 int currentTick = 0;
 
-// ---------- EVENT LOG ----------
+// the last 3 events
 string events[3] = {"", "", ""};
-string lastAction = "Waiting for command...";
+string lastAction = "(nothing yet)";
 
 void addEvent(string text) {
     events[0] = events[1];
@@ -32,27 +28,27 @@ void addEvent(string text) {
     events[2] = "[tick " + to_string(currentTick) + "] " + text;
 }
 
+// random number between -rate and +rate
 double randomNudge(double rate) {
     return ((rand() % 2001) - 1000) / 1000.0 * rate;
 }
 
+// keep a value between low and high
 double limit(double value, double low, double high) {
     if (value < low) return low;
     if (value > high) return high;
     return value;
 }
 
-// ---------- FOOD ----------
 struct Food {
     double x, y;
 };
 
-// ---------- GLOBAL LISTS ----------
 class Animal;
 Animal* animals[100];
 int animalCount = 0;
 
-Food foods[50];
+Food foods[MAX_FOOD];
 int foodCount = 0;
 
 // ---------- BASE CLASS ----------
@@ -70,7 +66,7 @@ public:
         this->speed = speed;
         this->vision = vision;
         this->size = size;
-        energy = 20;
+        energy = 40;
         alive = true;
     }
 
@@ -79,6 +75,7 @@ public:
     double getSpeed() { return speed; }
     double getVision() { return vision; }
     double getSize() { return size; }
+    double getEnergy() { return energy; }
     bool isAlive() { return alive; }
     void die() { alive = false; }
 
@@ -90,20 +87,18 @@ public:
 
     void moveToward(double targetX, double targetY, double step) {
         double d = distanceTo(targetX, targetY);
-
         if (d <= step) {
             x = targetX;
             y = targetY;
         } else {
-            x += (targetX - x) / d * step;
-            y += (targetY - y) / d * step;
+            x = x + (targetX - x) / d * step;
+            y = y + (targetY - y) / d * step;
         }
     }
 
     void moveAway(double fromX, double fromY, double step) {
         double d = distanceTo(fromX, fromY);
         if (d == 0) return;
-
         double dx = -(fromX - x) / d * step;
         double dy = -(fromY - y) / d * step;
 
@@ -114,9 +109,8 @@ public:
             dy = 0;
             dx = (dx >= 0 ? step : -step);
         }
-
-        x += dx;
-        y += dy;
+        x = x + dx;
+        y = y + dy;
     }
 
     void keepInside() {
@@ -127,28 +121,23 @@ public:
     }
 
     void payEnergy(double step) {
-        energy -= (0.3 + 0.3 * size + 0.3 * step * step);
-
+        energy = energy - (0.1 + 0.1 * size + 0.1 * step * step);
         if (energy <= 0 && alive) {
             alive = false;
             starved++;
-            addEvent(string(symbol() == 'r' ? "Rabbit" : "Fox")
-                     + " died of starvation");
+            addEvent(string(symbol() == 'r' ? "Rabbit" : "Fox") + " died of starvation");
         }
     }
 
     void tryReproduce(double threshold) {
         if (alive && energy > threshold && animalCount < 100) {
             Animal* baby = makeBaby();
-            energy /= 2;
+            energy = energy / 2;
             baby->energy = energy;
-
             animals[animalCount] = baby;
             animalCount++;
             births++;
-
-            addEvent(string(symbol() == 'r' ? "Rabbit" : "Fox")
-                     + " was born");
+            addEvent(string(symbol() == 'r' ? "Rabbit" : "Fox") + " was born");
         }
     }
 
@@ -170,23 +159,17 @@ public:
         double s = limit(speed + randomNudge(mutationRate), 0.3, 2.0);
         double v = limit(vision + randomNudge(mutationRate) * 3, 2.0, 10.0);
         double z = limit(size + randomNudge(mutationRate), 0.5, 2.0);
-
         return new Rabbit(x, y, s, v, z);
     }
 
     void update() {
         double step = speed;
 
-        // Find the nearest fox inside vision.
         int foxIndex = -1;
         double best = vision;
-
         for (int i = 0; i < animalCount; i++) {
             if (animals[i]->symbol() == 'F' && animals[i]->isAlive()) {
-                double d = distanceTo(
-                    animals[i]->getX(), animals[i]->getY()
-                );
-
+                double d = distanceTo(animals[i]->getX(), animals[i]->getY());
                 if (d < best) {
                     best = d;
                     foxIndex = i;
@@ -196,20 +179,12 @@ public:
 
         if (foxIndex != -1) {
             step = speed * 1.5;
-
-            moveAway(
-                animals[foxIndex]->getX(),
-                animals[foxIndex]->getY(),
-                step
-            );
+            moveAway(animals[foxIndex]->getX(), animals[foxIndex]->getY(), step);
         } else {
-            // Find the nearest food inside vision.
             int foodIndex = -1;
             best = vision;
-
             for (int i = 0; i < foodCount; i++) {
                 double d = distanceTo(foods[i].x, foods[i].y);
-
                 if (d < best) {
                     best = d;
                     foodIndex = i;
@@ -217,26 +192,21 @@ public:
             }
 
             if (foodIndex != -1) {
-                double targetX = foods[foodIndex].x;
-                double targetY = foods[foodIndex].y;
-
-                moveToward(targetX, targetY, step);
-
-                if (distanceTo(targetX, targetY) < 0.5) {
-                    energy += 8 + 4 * size;
+                moveToward(foods[foodIndex].x, foods[foodIndex].y, step);
+                if (distanceTo(foods[foodIndex].x, foods[foodIndex].y) < 0.5) {
+                    energy = energy + 15 + 5 * size;
                     foods[foodIndex] = foods[foodCount - 1];
                     foodCount--;
                 }
             } else {
-                // Wander randomly.
-                x += (rand() % 3 - 1) * step;
-                y += (rand() % 3 - 1) * step;
+                x = x + (rand() % 3 - 1) * step;
+                y = y + (rand() % 3 - 1) * step;
             }
         }
 
         keepInside();
         payEnergy(step);
-        tryReproduce(30);
+        tryReproduce(70);
     }
 };
 
@@ -251,7 +221,7 @@ private:
 public:
     Fox(double x, double y, double speed, double vision, double size)
         : Animal(x, y, speed, vision, size) {
-        energy = 40;
+        energy = 100;
         sprintTicks = 0;
         restTicks = 0;
         hasPatrol = false;
@@ -263,20 +233,15 @@ public:
         double s = limit(speed + randomNudge(mutationRate), 0.3, 2.0);
         double v = limit(vision + randomNudge(mutationRate) * 3, 2.0, 10.0);
         double z = limit(size + randomNudge(mutationRate), 0.5, 2.0);
-
         return new Fox(x, y, s, v, z);
     }
 
     void update() {
         int preyIndex = -1;
         double best = vision;
-
         for (int i = 0; i < animalCount; i++) {
             if (animals[i]->symbol() == 'r' && animals[i]->isAlive()) {
-                double d = distanceTo(
-                    animals[i]->getX(), animals[i]->getY()
-                );
-
+                double d = distanceTo(animals[i]->getX(), animals[i]->getY());
                 if (d < best) {
                     best = d;
                     preyIndex = i;
@@ -293,79 +258,64 @@ public:
             } else if (best < 3.0) {
                 step = speed * 2;
                 sprintTicks++;
-
                 if (sprintTicks >= 3) {
                     sprintTicks = 0;
                     restTicks = 6;
                 }
             }
 
-            double preyX = animals[preyIndex]->getX();
-            double preyY = animals[preyIndex]->getY();
+            moveToward(animals[preyIndex]->getX(), animals[preyIndex]->getY(), step);
 
-            moveToward(preyX, preyY, step);
-
-            if (distanceTo(preyX, preyY) < 0.5 &&
-                animals[preyIndex]->isAlive()) {
+            if (distanceTo(animals[preyIndex]->getX(), animals[preyIndex]->getY()) < 0.5) {
                 animals[preyIndex]->die();
-                energy += 25;
+                energy = energy + 40;
                 eaten++;
                 addEvent("Fox ate a rabbit");
             }
         } else {
             sprintTicks = 0;
-
             if (!hasPatrol || distanceTo(patrolX, patrolY) < 1.0) {
                 patrolX = rand() % WIDTH;
                 patrolY = rand() % HEIGHT;
                 hasPatrol = true;
             }
-
             step = speed * 0.6;
             moveToward(patrolX, patrolY, step);
         }
 
         keepInside();
         payEnergy(step);
-        tryReproduce(70);
+        tryReproduce(160);
     }
 };
 
-// ---------- AVERAGE GENES ----------
+// average genes of one kind of animal ('r' or 'F'); returns how many there are
 int averageGenes(char type, double& s, double& v, double& z) {
     int count = 0;
-    s = 0;
-    v = 0;
-    z = 0;
-
+    s = 0; v = 0; z = 0;
     for (int i = 0; i < animalCount; i++) {
         if (animals[i]->symbol() == type) {
             count++;
-            s += animals[i]->getSpeed();
-            v += animals[i]->getVision();
-            z += animals[i]->getSize();
+            s = s + animals[i]->getSpeed();
+            v = v + animals[i]->getVision();
+            z = z + animals[i]->getSize();
         }
     }
-
     if (count > 0) {
-        s /= count;
-        v /= count;
-        z /= count;
+        s = s / count;
+        v = v / count;
+        z = z / count;
     }
-
     return count;
 }
 
-// =====================================================
-// WORLD CLASS
-// =====================================================
+// ---------- THE WORLD ----------
 class World {
 private:
     double startS, startV, startZ;
 
     void removeDead() {
         int j = 0;
-
         for (int i = 0; i < animalCount; i++) {
             if (animals[i]->isAlive()) {
                 animals[j] = animals[i];
@@ -374,7 +324,6 @@ private:
                 delete animals[i];
             }
         }
-
         animalCount = j;
     }
 
@@ -394,63 +343,50 @@ public:
         foods[4] = {21, 6};
         foodCount = 5;
 
+        for (int i = 0; i < 10; i++) {
+            foods[foodCount] = { (double)(rand() % WIDTH), (double)(rand() % HEIGHT) };
+            foodCount++;
+        }
+
         averageGenes('r', startS, startV, startZ);
-        addEvent("Simulation ready: 2 foxes, 3 rabbits, 5 food");
+        addEvent("Simulation ready: 2 foxes, 3 rabbits, 15 food");
     }
 
-    // ---------- ADMIN ACTIONS ----------
-    void addRabbits(int n) {
-        int added = 0;
+    // the rabbits' average genes at the start (the window shows them)
+    void getStart(double& s, double& v, double& z) {
+        s = startS; v = startV; z = startZ;
+    }
 
+    // ---- admin actions ----
+    void addRabbits(int n) {
         for (int i = 0; i < n && animalCount < 100; i++) {
             double s = 0.6 + (rand() % 61) / 100.0;
             double v = 4 + rand() % 5;
             double z = 0.8 + (rand() % 41) / 100.0;
-
-            animals[animalCount] = new Rabbit(
-                rand() % WIDTH, rand() % HEIGHT, s, v, z
-            );
-
+            animals[animalCount] = new Rabbit(rand() % WIDTH, rand() % HEIGHT, s, v, z);
             animalCount++;
-            added++;
         }
-
-        addEvent("Admin added " + to_string(added) + " rabbits");
+        addEvent("Admin added " + to_string(n) + " rabbits");
     }
 
     void addFoxes(int n) {
-        int added = 0;
-
         for (int i = 0; i < n && animalCount < 100; i++) {
             double s = 0.6 + (rand() % 61) / 100.0;
             double v = 4 + rand() % 5;
             double z = 0.8 + (rand() % 41) / 100.0;
-
-            animals[animalCount] = new Fox(
-                rand() % WIDTH, rand() % HEIGHT, s, v, z
-            );
-
+            animals[animalCount] = new Fox(rand() % WIDTH, rand() % HEIGHT, s, v, z);
             animalCount++;
-            added++;
         }
-
-        addEvent("Admin added " + to_string(added) + " foxes");
+        addEvent("Admin added " + to_string(n) + " foxes");
     }
 
     void dropFood(double fx, double fy, int n) {
-        int added = 0;
-
-        for (int i = 0; i < n && foodCount < 50; i++) {
-            foods[foodCount].x =
-                limit(fx + randomNudge(2), 0, WIDTH - 1);
-            foods[foodCount].y =
-                limit(fy + randomNudge(2), 0, HEIGHT - 1);
-
+        for (int i = 0; i < n && foodCount < MAX_FOOD; i++) {
+            foods[foodCount].x = limit(fx + randomNudge(2), 0, WIDTH - 1);
+            foods[foodCount].y = limit(fy + randomNudge(2), 0, HEIGHT - 1);
             foodCount++;
-            added++;
         }
-
-        addEvent("Admin dropped " + to_string(added) + " food");
+        addEvent("Admin dropped " + to_string(n) + " food");
     }
 
     void drought() {
@@ -460,284 +396,36 @@ public:
 
     void changeMutation(double amount) {
         mutationRate = limit(mutationRate + amount, 0, 1);
-
-        addEvent(
-            "Mutation rate is now " +
-            to_string(mutationRate).substr(0, 4)
-        );
+        addEvent("Mutation rate is now " + to_string(mutationRate).substr(0, 4));
     }
 
-    // ---------- ONE TICK ----------
+    // ---- one tick of the simulation ----
     void step() {
         currentTick++;
 
-        if (rand() % 100 < 10 && foodCount < 50) {
+        if (rand() % 100 < 30 && foodCount < MAX_FOOD) {
             foods[foodCount].x = rand() % WIDTH;
             foods[foodCount].y = rand() % HEIGHT;
             foodCount++;
         }
 
-        int countAtStart = animalCount;
-
-        for (int i = 0; i < countAtStart; i++) {
-            if (animals[i]->isAlive()) {
+        int count = animalCount;
+        for (int i = 0; i < count; i++)
+            if (animals[i]->isAlive())
                 animals[i]->update();
-            }
-        }
 
         removeDead();
     }
 
     int count(char type) {
         int c = 0;
-
-        for (int i = 0; i < animalCount; i++) {
-            if (animals[i]->symbol() == type) {
-                c++;
-            }
-        }
-
+        for (int i = 0; i < animalCount; i++)
+            if (animals[i]->symbol() == type) c++;
         return c;
     }
 
-    // ---------- DRAW SIMULATION ----------
-    void draw(bool running, int delayMs) {
-        char grid[HEIGHT][WIDTH];
-
-        for (int i = 0; i < HEIGHT; i++) {
-            for (int j = 0; j < WIDTH; j++) {
-                grid[i][j] = '.';
-            }
-        }
-
-        for (int i = 0; i < foodCount; i++) {
-            grid[(int)foods[i].y][(int)foods[i].x] = '*';
-        }
-
-        for (int i = 0; i < animalCount; i++) {
-            grid[(int)animals[i]->getY()]
-                [(int)animals[i]->getX()] = animals[i]->symbol();
-        }
-
-        cout << "=== BIO-DOME  Tick " << currentTick << "  "
-             << (running ? "[RUNNING]" : "[PAUSED]")
-             << "\033[K\n";
-
-        cout << "r = rabbit   F = fox   * = food\033[K\n";
-
-        for (int i = 0; i < HEIGHT; i++) {
-            for (int j = 0; j < WIDTH; j++) {
-                cout << grid[i][j];
-            }
-            cout << "\033[K\n";
-        }
-
-        cout << "Rabbits: " << count('r')
-             << "  Foxes: " << count('F')
-             << "  Food: " << foodCount << "\033[K\n";
-
-        cout << "Births: " << births
-             << "  Eaten: " << eaten
-             << "  Starved: " << starved << "\033[K\n";
-
-        cout << "Mutation rate: " << fixed << setprecision(2)
-             << mutationRate
-             << "   Delay: " << delayMs << " ms\033[K\n";
-
-        // MODIFIED: Display the latest command and its effect.
-        cout << "COMMAND / ACTION: " << lastAction << "\033[K\n";
-
-        double nowS, nowV, nowZ;
-
-        if (averageGenes('r', nowS, nowV, nowZ) > 0) {
-            cout << "Rabbit genes   start    now\033[K\n";
-            cout << "  speed       " << setw(6) << startS
-                 << " " << setw(6) << nowS << "\033[K\n";
-            cout << "  vision      " << setw(6) << startV
-                 << " " << setw(6) << nowV << "\033[K\n";
-            cout << "  size        " << setw(6) << startZ
-                 << " " << setw(6) << nowZ << "\033[K\n";
-        } else {
-            cout << "NO RABBITS ALIVE - press R to add some\033[K\n";
-            cout << "\033[K\n\033[K\n\033[K\n";
-        }
-
-        cout << "Recent events:\033[K\n";
-
-        for (int i = 0; i < 3; i++) {
-            cout << "  " << events[i] << "\033[K\n";
-        }
-    }
-
     void cleanup() {
-        for (int i = 0; i < animalCount; i++) {
-            delete animals[i];
-        }
-
+        for (int i = 0; i < animalCount; i++) delete animals[i];
         animalCount = 0;
     }
 };
-
-// =====================================================
-// MAIN
-// =====================================================
-int main() {
-    srand((unsigned int)time(0));
-
-    // Enable ANSI escape sequences in the Windows console.
-    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD mode = 0;
-
-    if (GetConsoleMode(h, &mode)) {
-        SetConsoleMode(h, mode | 0x0004);
-    }
-
-    World world;
-    world.setup();
-
-    bool running = false;
-    bool quit = false;
-    int delayMs = 300;
-
-    cout << "\033[2J\033[?25l";
-
-    while (!quit) {
-        // ---------- DRAW FRAME ----------
-        ostringstream frame;
-        streambuf* old = cout.rdbuf(frame.rdbuf());
-
-        world.draw(running, delayMs);
-
-        cout << "CONTROLS\033[K\n";
-        cout << " [SPACE] Run/Pause  [N] One step  [1-5] Speed\033[K\n";
-        cout << " [R] +5 rabbits  [F] +2 foxes  [D] Drop food\033[K\n";
-        cout << " [K] Drought  [+/-] Mutation rate  [Q] Quit\033[K\n";
-        cout << "\033[J";
-
-        cout.rdbuf(old);
-
-        CONSOLE_SCREEN_BUFFER_INFO info;
-
-        if (GetConsoleScreenBufferInfo(h, &info)) {
-            SetConsoleCursorPosition(
-                h, COORD{0, info.srWindow.Top}
-            );
-        }
-
-        cout << frame.str();
-        cout.flush();
-
-        // ---------- READ KEY ----------
-        char key = 0;
-
-        if (running) {
-            this_thread::sleep_for(chrono::milliseconds(delayMs));
-
-            if (_kbhit()) {
-                key = _getch();
-            }
-        } else {
-            key = _getch();
-        }
-
-        // ---------- HANDLE COMMAND ----------
-        bool stepOnce = false;
-
-        if (key == 'q' || key == 'Q') {
-            lastAction = "[Q] QUIT: exiting simulation";
-            quit = true;
-        }
-        else if (key == ' ') {
-            running = !running;
-
-            lastAction = running
-                ? "[SPACE] RUN: simulation started"
-                : "[SPACE] PAUSE: simulation paused";
-        }
-        else if (key == 'n' || key == 'N') {
-            stepOnce = true;
-            lastAction = "[N] STEP: advancing one tick";
-        }
-        else if (key >= '1' && key <= '5') {
-            if (key == '1') delayMs = 800;
-            if (key == '2') delayMs = 400;
-            if (key == '3') delayMs = 200;
-            if (key == '4') delayMs = 80;
-            if (key == '5') delayMs = 20;
-
-            lastAction = string("[") + key + "] SPEED: " +
-                (key == '1' ? "very slow" :
-                 key == '2' ? "slow" :
-                 key == '3' ? "medium" :
-                 key == '4' ? "fast" : "very fast");
-        }
-        else if (key == 'r' || key == 'R') {
-            world.addRabbits(5);
-            lastAction = "[R] ADD RABBITS: +5";
-        }
-        else if (key == 'f' || key == 'F') {
-            world.addFoxes(2);
-            lastAction = "[F] ADD FOXES: +2";
-        }
-        else if (key == 'k' || key == 'K') {
-            world.drought();
-            lastAction = "[K] DROUGHT: removed all food";
-        }
-        else if (key == '+') {
-            world.changeMutation(0.05);
-            lastAction = "[+] MUTATION: increased by 0.05";
-        }
-        else if (key == '-') {
-            world.changeMutation(-0.05);
-            lastAction = "[-] MUTATION: decreased by 0.05";
-        }
-        else if (key == 'd' || key == 'D') {
-            // Show the cursor and pause the animation while entering input.
-            cout << "\033[?25h";
-
-            string a;
-
-            cout << "\n========== DROP FOOD ==========\n";
-            cout << "Enter the coordinates and amount below.\n";
-
-            cout << "Food x (0-39): ";
-            getline(cin, a);
-            double fx = atof(a.c_str());
-
-            cout << "Food y (0-13): ";
-            getline(cin, a);
-            double fy = atof(a.c_str());
-
-            cout << "How many: ";
-            getline(cin, a);
-            int n = atoi(a.c_str());
-
-            world.dropFood(fx, fy, n);
-
-            lastAction = "[D] FOOD DROP: " + to_string(n) +
-                " near (" + to_string((int)fx) +
-                ", " + to_string((int)fy) + ")";
-
-            cout << "\n" << lastAction << "\n";
-            cout << "Press any key to return to the simulation...";
-            cout.flush();
-
-            _getch();
-
-            cout << "\033[2J\033[?25l";
-        }
-        else if (key != 0) {
-            lastAction = string("[") + key + "] UNKNOWN COMMAND";
-        }
-
-        // ---------- UPDATE ----------
-        if (!quit && (running || stepOnce)) {
-            world.step();
-        }
-    }
-
-    cout << "\033[?25h\n";
-    world.cleanup();
-
-    return 0;
-}
